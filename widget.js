@@ -1,4 +1,41 @@
 const $ = s => document.querySelector(s);
+const IC = {
+  trash: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.6 9h6.8L12 4M6.8 6.5v4.5M9.2 6.5v4.5"/></svg>',
+  grip: '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="6" cy="4" r="1.1"/><circle cx="10" cy="4" r="1.1"/><circle cx="6" cy="8" r="1.1"/><circle cx="10" cy="8" r="1.1"/><circle cx="6" cy="12" r="1.1"/><circle cx="10" cy="12" r="1.1"/></svg>',
+  plus: '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>'
+};
+(function () {
+  const st = document.createElement('style');
+  st.textContent = `
+  .ft-row { display:flex; gap:8px; align-items:flex-start; margin-bottom:8px; position:relative; }
+  .ft-lead { flex:0 0 74px; padding-top:7px; color:#4b5563; }
+  .ft-lead select { width:100%; }
+  .ft-body { flex:1; min-width:0; }
+  .ft-cells { display:flex; align-items:stretch; border:1px solid #d1d5db; border-radius:6px; background:#fff; overflow:hidden; }
+  .ft-cells > select, .ft-cells > input { flex:1 1 0; min-width:0; border:0; border-right:1px solid #e5e7eb; border-radius:0; outline-offset:-2px; }
+  .ft-cells > .ft-ic { border-left:0; border-right:1px solid #e5e7eb; border-radius:0; padding:0 9px; }
+  .ft-cells > .ft-ic:last-child { border-right:0; }
+  .ft-ic { border:0; background:transparent; color:#374151; cursor:pointer; padding:4px 6px; border-radius:4px; display:inline-flex; align-items:center; justify-content:center; list-style:none; }
+  .ft-ic:hover { background:rgba(0,0,0,.06); }
+  .ft-drag { cursor:grab; }
+  summary.ft-ic::-webkit-details-marker { display:none; }
+  .ft-grp { background:#f4f5f9; border:1px solid #e5e7eb; border-radius:6px; padding:8px 10px 2px; }
+  .ft-gh { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; color:#6b7280; }
+  .ft-gi { display:inline-flex; align-items:center; gap:2px; }
+  .ft-menu { position:relative; }
+  .ft-pop { position:absolute; right:0; top:100%; z-index:20; background:#fff; border:1px solid #d1d5db; border-radius:6px; box-shadow:0 4px 14px rgba(0,0,0,.15); padding:4px; min-width:250px; }
+  .ft-pop button { display:block; width:100%; text-align:left; border:0; background:none; padding:7px 9px; border-radius:4px; cursor:pointer; font:inherit; color:#1f2937; }
+  .ft-pop button:hover { background:#f3f4f6; }
+  .ft-foot { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-top:4px; }
+  .ft-link { border:0; background:none; color:#4b5563; cursor:pointer; font:inherit; font-weight:600; padding:4px 0; display:inline-flex; align-items:center; gap:6px; }
+  .ft-link:hover { color:#111827; } .ft-link:disabled { opacity:.4; cursor:default; }
+  .ft-help { width:18px; height:18px; border:1.5px solid #6b7280; border-radius:50%; color:#6b7280; font-size:11px; display:inline-flex; align-items:center; justify-content:center; cursor:help; }
+  .ft-over-top::before, .ft-over-bot::after { content:''; position:absolute; left:0; right:0; height:3px; background:#2563eb; border-radius:2px; }
+  .ft-over-top::before { top:-5px; } .ft-over-bot::after { bottom:-5px; }
+  .ft-dragging { opacity:.4; }
+  @media (max-width:560px) { .ft-cells { flex-wrap:wrap; } .ft-cells > select, .ft-cells > input { flex:1 1 45%; border-bottom:1px solid #e5e7eb; } .ft-lead { flex-basis:56px; } }`;
+  document.head.appendChild(st);
+})();
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 const DEFAULTS = {
@@ -369,10 +406,9 @@ function renderPanel() {
     const refName = type.split(':')[1];
     const colMeta = colsOf().find(c => c.id === f.col);
     const modeLabel = m => m === 'pick'
-      ? (isRef ? 'Choisir une ligne' + (refName ? ' de « ' + refName + ' »' : '')
-        : (colMeta && colMeta.choices && colMeta.choices.length ? 'Choisir dans la liste' : 'Choisir une valeur existante'))
-      : m === 'link' ? 'Id de la ligne liée' + (linkedId != null ? ' (actuel : ' + linkedId + ')' : ' (aucune ligne)')
-      : (isRef ? 'Id brut' : isChoice ? 'Valeur brute' : 'Valeur fixe');
+      ? (isRef ? 'Ligne…' : (colMeta && colMeta.choices && colMeta.choices.length ? 'Liste…' : 'Existante…'))
+      : m === 'link' ? 'Vue liée' + (linkedId != null ? ' (#' + linkedId + ')' : ' (aucune)')
+      : (isRef ? 'Id brut' : 'Valeur');
     let valueCtl = '';
     if (needVal && src !== 'link') {
       if (src === 'pick') {
@@ -384,20 +420,15 @@ function renderPanel() {
           valueCtl = `<select data-fi="${i}" data-fk="value">${optHtml('', '— choisir —', !cur)}${extra.concat(o).map(x => optHtml(x.v, x.l, x.v === cur)).join('')}</select>`;
         }
       } else {
-        valueCtl = `<input type="${itype}" data-fi="${i}" data-fk="value" value="${esc(f.value)}" placeholder="${isRef ? 'id de la ligne' : 'valeur'}">`;
+        valueCtl = `<input type="${itype}" data-fi="${i}" data-fk="value" value="${esc(f.value)}" placeholder="${isRef ? 'id de la ligne' : 'Saisir une valeur'}">`;
       }
     }
-    return `<div class="flt">
-      <div class="row">
-        <select data-fi="${i}" data-fk="col" data-rr="1">${optHtml('', '— colonne —', !f.col)}${cols.map(c => optHtml(c.id, c.label, c.id === f.col)).join('')}</select>
-        <button class="btn x" data-act="delf" data-i="${i}" title="Supprimer">✕</button>
-      </div>
-      <div class="row">
-        <select data-fi="${i}" data-fk="op" data-rr="1">${ops.map(o => optHtml(o[0], o[1], o[0] === f.op)).join('')}</select>
-      </div>
-      ${modes.length > 1 ? `<div class="row"><select data-fi="${i}" data-fk="src" data-rr="1">${modes.map(m => optHtml(m, modeLabel(m), m === src)).join('')}</select></div>` : ''}
-      ${valueCtl ? `<div class="row">${valueCtl}</div>` : ''}
-    </div>`;
+    const selCol = `<select data-fi="${i}" data-fk="col" data-rr="1">${optHtml('', '— colonne —', !f.col)}${cols.map(c => optHtml(c.id, c.label, c.id === f.col)).join('')}</select>`;
+    const selOp = `<select data-fi="${i}" data-fk="op" data-rr="1">${ops.map(o => optHtml(o[0], o[1], o[0] === f.op)).join('')}</select>`;
+    const selMode = modes.length > 1 ? `<select data-fi="${i}" data-fk="src" data-rr="1">${modes.map(m => optHtml(m, modeLabel(m), m === src)).join('')}</select>` : '';
+    return `<div class="ft-cells">${selCol}${selOp}${selMode}${valueCtl}
+      <button class="ft-ic" data-act="delf" data-i="${i}" title="Supprimer la condition">${IC.trash}</button>
+      <button class="ft-ic ft-drag" draggable="true" data-dp="${i}" title="Glisser pour déplacer">${IC.grip}</button></div>`;
   };
 
   const MAX_DEPTH = 3;
@@ -406,22 +437,29 @@ function renderPanel() {
     const match = path === '' ? opts.match : g.match;
     const rows = items.map((it, idx) => {
       const p = path === '' ? String(idx) : path + '.' + idx;
-      const lead = idx === 0 ? 'Où'
-        : idx === 1 ? `<select data-gp="${path}" data-rr="1">${optHtml('all', 'Et', match !== 'any')}${optHtml('any', 'Ou', match === 'any')}</select>`
-        : (match === 'any' ? 'Ou' : 'Et');
-      return `<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:8px">
-        <div style="flex:0 0 58px;padding-top:6px;color:#6b7280">${lead}</div>
-        <div style="flex:1;min-width:0">${it.group ? renderGroup(it, p, depth + 1) : renderCond(it, p)}</div></div>`;
+      const lead = idx === 0 ? 'Lorsque'
+        : idx === 1 ? `<select data-gp="${path}" data-rr="1">${optHtml('all', 'et', match !== 'any')}${optHtml('any', 'ou', match === 'any')}</select>`
+        : (match === 'any' ? 'ou' : 'et');
+      return `<div class="ft-row" data-p="${p}"><div class="ft-lead">${lead}</div>
+        <div class="ft-body">${it.group ? renderGroup(it, p, depth + 1) : renderCond(it, p)}</div></div>`;
     }).join('');
-    const btns = `<div style="display:flex;gap:6px;flex-wrap:wrap">
-      <button class="btn" data-act="addf" data-p="${path}" ${opts.tableId ? '' : 'disabled'}>+ Condition</button>
-      ${depth < MAX_DEPTH ? `<button class="btn" data-act="addg" data-p="${path}" ${opts.tableId ? '' : 'disabled'}>+ Groupe</button>` : ''}</div>`;
-    if (path === '') return rows + btns;
-    return `<div style="border:1px solid #bfdbfe;border-left:4px solid #60a5fa;border-radius:8px;padding:8px;background:#f0f7ff">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <b style="font-size:12px;color:#1d4ed8">Groupe — ${match === 'any' ? 'au moins une condition (OU)' : 'toutes les conditions (ET)'}</b>
-        <button class="btn x" data-act="delf" data-i="${path}" title="Supprimer le groupe">✕</button></div>
-      ${rows}${btns}</div>`;
+    const dis = opts.tableId ? '' : 'disabled';
+    if (path === '') {
+      return rows + `<div class="ft-foot">
+        <button class="ft-link" data-act="addf" data-p="" ${dis}>${IC.plus} Ajouter une condition</button>
+        ${depth < MAX_DEPTH ? `<button class="ft-link" data-act="addg" data-p="" ${dis}>${IC.plus} Ajouter un groupe de conditions</button>` : ''}
+        <span class="ft-help" title="Le choix « et / ou » de la 2e ligne s'applique à toutes les lignes du même niveau. Les conditions incomplètes sont ignorées. Glissez la poignée ⋮⋮ pour réordonner.">?</span></div>`;
+    }
+    return `<div class="ft-grp">
+      <div class="ft-gh"><span>${match === 'any' ? 'L’une des conditions suivantes est vraie…' : 'Toutes les conditions suivantes sont vraies…'}</span>
+        <span class="ft-gi">
+          <details class="ft-menu"><summary class="ft-ic" title="Ajouter">${IC.plus}</summary><div class="ft-pop">
+            <button data-act="addf" data-p="${path}">Ajouter une condition</button>
+            ${depth < MAX_DEPTH ? `<button data-act="addg" data-p="${path}">Ajouter un groupe de conditions</button>` : ''}</div></details>
+          <button class="ft-ic" data-act="delf" data-i="${path}" title="Supprimer le groupe">${IC.trash}</button>
+          <button class="ft-ic ft-drag" draggable="true" data-dp="${path}" title="Glisser pour déplacer">${IC.grip}</button>
+        </span></div>
+      ${rows}</div>`;
   };
   const filters = renderGroup(null, '', 0);
 
@@ -441,7 +479,6 @@ function renderPanel() {
         <label class="chk"><input type="checkbox" data-k="limitLinked" ${opts.limitLinked ? 'checked' : ''}> Limiter aux lignes de la vue liée</label>
         <p class="hint">${attachedTable === opts.tableId ? 'Actif : le widget est rattaché à cette table.' : 'Sans effet : le widget est rattaché à ' + esc(attachedTable || '?') + ', pas à cette table.'}</p>
         ${filters}
-        <p class="hint">Le sélecteur Et / Ou de la 2e ligne s'applique à tout le groupe. Les conditions incomplètes sont ignorées.</p>
       </div>
 
       <div class="sec"><h4>Texte</h4>
@@ -516,6 +553,49 @@ function handle(t) {
 }
 $('#panel').addEventListener('input', e => { if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') handle(e.target); });
 $('#panel').addEventListener('change', e => { if (e.target.tagName === 'SELECT') handle(e.target); });
+/* ---------- Glisser-déposer des conditions / groupes ---------- */
+let dragPath = null;
+function locate(node, arr) {
+  for (let i = 0; i < arr.length; i++) {
+    if (arr[i] === node) return { arr, idx: i };
+    if (arr[i].group) { const r = locate(node, arr[i].items); if (r) return r; }
+  }
+  return null;
+}
+function dropAllowed(target) {
+  return dragPath !== null && target !== dragPath && !target.startsWith(dragPath + '.');
+}
+function clearOver() { document.querySelectorAll('.ft-over-top,.ft-over-bot,.ft-dragging').forEach(x => x.classList.remove('ft-over-top', 'ft-over-bot', 'ft-dragging')); }
+$('#panel').addEventListener('dragstart', e => {
+  const h = e.target.closest && e.target.closest('[data-dp]');
+  if (!h) return;
+  dragPath = h.dataset.dp;
+  e.dataTransfer.effectAllowed = 'move';
+  try { e.dataTransfer.setData('text/plain', dragPath); } catch (x) {}
+  const row = h.closest('.ft-row');
+  if (row) { try { e.dataTransfer.setDragImage(row, 12, 12); } catch (x) {} setTimeout(() => row.classList.add('ft-dragging'), 0); }
+});
+$('#panel').addEventListener('dragover', e => {
+  const row = e.target.closest && e.target.closest('.ft-row');
+  if (!row || !dropAllowed(row.dataset.p)) return;
+  e.preventDefault();
+  const r = row.getBoundingClientRect(), top = e.clientY < r.top + r.height / 2;
+  document.querySelectorAll('.ft-over-top,.ft-over-bot').forEach(x => x.classList.remove('ft-over-top', 'ft-over-bot'));
+  row.classList.add(top ? 'ft-over-top' : 'ft-over-bot');
+});
+$('#panel').addEventListener('drop', e => {
+  const row = e.target.closest && e.target.closest('.ft-row');
+  if (!row || !dropAllowed(row.dataset.p)) return;
+  e.preventDefault();
+  const r = row.getBoundingClientRect(), before = e.clientY < r.top + r.height / 2;
+  const target = nodeAt(row.dataset.p).node, moved = nodeAt(dragPath);
+  const node = moved.node;
+  moved.arr.splice(moved.idx, 1);
+  const loc = locate(target, opts.filters);
+  if (loc) loc.arr.splice(before ? loc.idx : loc.idx + 1, 0, node); else moved.arr.splice(moved.idx, 0, node);
+  dragPath = null; clearOver(); commit(true, false);
+});
+$('#panel').addEventListener('dragend', () => { dragPath = null; clearOver(); });
 $('#panel').addEventListener('click', e => {
   const b = e.target.closest('[data-act]'); if (!b) return;
   const a = b.dataset.act;
