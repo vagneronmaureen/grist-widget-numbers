@@ -229,6 +229,35 @@ function passes(f, v, type) {
   return true;
 }
 
+/* ---------- Arbre de filtres (groupes ET/OU imbriqués) ---------- */
+function compileGroup(g, d) {
+  const parts = [];
+  for (const it of (g.items || [])) {
+    if (it.group) { const c = compileGroup(it, d); if (c) parts.push(c); }
+    else if (activeFilter(it) && d[it.col]) {
+      parts.push(it.src === 'link'
+        ? { f: { ...it, value: String(linkedId) }, arr: d[it.col], type: colType(it.col), never: linkedId == null }
+        : { f: it, arr: d[it.col], type: colType(it.col) });
+    }
+  }
+  return parts.length ? { any: g.match === 'any', parts } : null;
+}
+function evalNode(n, i) {
+  if (n.parts) { const t = x => evalNode(x, i); return n.any ? n.parts.some(t) : n.parts.every(t); }
+  return !n.never && passes(n.f, n.arr[i], n.type);
+}
+function itemsAt(path) {            // tableau d'éléments du groupe situé à `path` ('' = racine)
+  let arr = opts.filters;
+  if (path === '') return arr;
+  for (const k of path.split('.').map(Number)) arr = arr[k].items;
+  return arr;
+}
+function nodeAt(path) {
+  const ps = path.split('.').map(Number), idx = ps.pop();
+  const arr = itemsAt(ps.join('.'));
+  return { arr, idx, node: arr[idx] };
+}
+
 function compute() {
   if (!opts.tableId) return { msg: 'Choisissez une table dans la configuration.' };
   if (cache.error) return { msg: cache.error };
@@ -242,19 +271,14 @@ function compute() {
     if (!farr) return { msg: 'Champ introuvable : ' + opts.field };
     ftype = colType(opts.field);
   }
-  const fs = opts.filters.filter(activeFilter).filter(f => d[f.col]).map(f => f.src === 'link'
-    ? { f: { ...f, value: String(linkedId) }, arr: d[f.col], type: colType(f.col), never: linkedId == null }
-    : { f, arr: d[f.col], type: colType(f.col) });
+  const tree = compileGroup({ match: opts.match, items: opts.filters }, d);
   const n = (d.id || []).length;
   const limit = opts.limitLinked && attachedTable === opts.tableId;
   let count = 0, filled = 0, sum = 0; const nums = [], set = new Set();
   for (let i = 0; i < n; i++) {
     if (limit && !linkedRows.has(d.id[i])) continue;
     let ok = true;
-    if (fs.length) {
-      const t = x => !x.never && passes(x.f, x.arr[i], x.type);
-      ok = opts.match === 'any' ? fs.some(t) : fs.every(t);
-    }
+    if (tree) ok = evalNode(tree, i);
     if (!ok) continue;
     count++;
     if (farr) {
@@ -331,7 +355,7 @@ function renderPanel() {
   const agg = AGGS.find(a => a.id === opts.aggregation) || AGGS[0];
   const fieldCols = agg.numeric ? cols.filter(c => ['Numeric', 'Int'].includes(c.type.split(':')[0])) : cols;
 
-  const filters = opts.filters.map((f, i) => {
+  const renderCond = (f, i) => {
     const type = colType(f.col), cat = catOf(type), b = type.split(':')[0];
     const ops = OPS[cat] || OPS.text;
     const needVal = !NOVAL.includes(f.op);
@@ -374,7 +398,32 @@ function renderPanel() {
       ${modes.length > 1 ? `<div class="row"><select data-fi="${i}" data-fk="src" data-rr="1">${modes.map(m => optHtml(m, modeLabel(m), m === src)).join('')}</select></div>` : ''}
       ${valueCtl ? `<div class="row">${valueCtl}</div>` : ''}
     </div>`;
-  }).join('');
+  };
+
+  const MAX_DEPTH = 3;
+  const renderGroup = (g, path, depth) => {
+    const items = path === '' ? opts.filters : g.items;
+    const match = path === '' ? opts.match : g.match;
+    const rows = items.map((it, idx) => {
+      const p = path === '' ? String(idx) : path + '.' + idx;
+      const lead = idx === 0 ? 'Où'
+        : idx === 1 ? `<select data-gp="${path}" data-rr="1">${optHtml('all', 'Et', match !== 'any')}${optHtml('any', 'Ou', match === 'any')}</select>`
+        : (match === 'any' ? 'Ou' : 'Et');
+      return `<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:8px">
+        <div style="flex:0 0 58px;padding-top:6px;color:#6b7280">${lead}</div>
+        <div style="flex:1;min-width:0">${it.group ? renderGroup(it, p, depth + 1) : renderCond(it, p)}</div></div>`;
+    }).join('');
+    const btns = `<div style="display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn" data-act="addf" data-p="${path}" ${opts.tableId ? '' : 'disabled'}>+ Condition</button>
+      ${depth < MAX_DEPTH ? `<button class="btn" data-act="addg" data-p="${path}" ${opts.tableId ? '' : 'disabled'}>+ Groupe</button>` : ''}</div>`;
+    if (path === '') return rows + btns;
+    return `<div style="border:1px solid #bfdbfe;border-left:4px solid #60a5fa;border-radius:8px;padding:8px;background:#f0f7ff">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <b style="font-size:12px;color:#1d4ed8">Groupe — ${match === 'any' ? 'au moins une condition (OU)' : 'toutes les conditions (ET)'}</b>
+        <button class="btn x" data-act="delf" data-i="${path}" title="Supprimer le groupe">✕</button></div>
+      ${rows}${btns}</div>`;
+  };
+  const filters = renderGroup(null, '', 0);
 
   $('#panel').innerHTML = `
     <div class="ph"><b>Configuration</b><button class="btn primary" data-act="close">Terminé</button></div>
@@ -389,13 +438,10 @@ function renderPanel() {
       </div>
 
       <div class="sec"><h4>Filtres</h4>
-        ${opts.filters.length > 1 ? `<label class="f"><span>Les lignes doivent respecter</span>
-          <select data-k="match" data-rr="0">${optHtml('all', 'toutes les conditions (ET)', opts.match === 'all')}${optHtml('any', "au moins une condition (OU)", opts.match === 'any')}</select></label>` : ''}
         <label class="chk"><input type="checkbox" data-k="limitLinked" ${opts.limitLinked ? 'checked' : ''}> Limiter aux lignes de la vue liée</label>
         <p class="hint">${attachedTable === opts.tableId ? 'Actif : le widget est rattaché à cette table.' : 'Sans effet : le widget est rattaché à ' + esc(attachedTable || '?') + ', pas à cette table.'}</p>
         ${filters}
-        <button class="btn" data-act="addf" ${opts.tableId ? '' : 'disabled'}>+ Ajouter un filtre</button>
-        <p class="hint">Les filtres incomplets sont ignorés.</p>
+        <p class="hint">Le sélecteur Et / Ou de la 2e ligne s'applique à tout le groupe. Les conditions incomplètes sont ignorées.</p>
       </div>
 
       <div class="sec"><h4>Texte</h4>
@@ -456,8 +502,11 @@ function handle(t) {
       else if (a.numeric && opts.field && !['Numeric', 'Int'].includes(colType(opts.field).split(':')[0])) opts.field = '';
     }
     commit(rr, reload);
+  } else if (t.dataset.gp !== undefined) {
+    if (t.dataset.gp === '') opts.match = t.value; else nodeAt(t.dataset.gp).node.match = t.value;
+    commit(true, false);
   } else if (t.dataset.fi !== undefined) {
-    const f = opts.filters[+t.dataset.fi], key = t.dataset.fk;
+    const f = nodeAt(t.dataset.fi).node, key = t.dataset.fk;
     f[key] = t.value;
     if (key === 'col') { const ops = OPS[catOf(colType(f.col))] || OPS.text; f.op = ops[0][0]; f.value = ''; f.src = modesFor(f.col, f.op)[0] || 'fixed'; }
     if (key === 'op') { const m = modesFor(f.col, f.op); if (NOVAL.includes(f.op)) f.value = ''; if (!m.includes(f.src)) { f.src = m[0] || 'fixed'; f.value = ''; } }
@@ -471,8 +520,9 @@ $('#panel').addEventListener('click', e => {
   const b = e.target.closest('[data-act]'); if (!b) return;
   const a = b.dataset.act;
   if (a === 'close') closePanel();
-  if (a === 'addf') { opts.filters.push({ col: '', op: '', value: '' }); commit(true, false); }
-  if (a === 'delf') { opts.filters.splice(+b.dataset.i, 1); commit(true, false); }
+  if (a === 'addf') { itemsAt(b.dataset.p).push({ col: '', op: '', value: '' }); commit(true, false); }
+  if (a === 'addg') { itemsAt(b.dataset.p).push({ group: true, match: 'all', items: [{ col: '', op: '', value: '' }] }); commit(true, false); }
+  if (a === 'delf') { const n = nodeAt(b.dataset.i); n.arr.splice(n.idx, 1); commit(true, false); }
   if (a === 'preset') { const p = PRESETS[+b.dataset.i]; opts.bg = p[0]; opts.color = p[1]; commit(true, false); }
 });
 
